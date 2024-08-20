@@ -42,6 +42,7 @@ export default class IronfishApp extends GenericApp {
         SIGN: 0x02,
         //DKG Instructions
         GET_IDENTITY: 0x10,
+        DKG_ROUND_1: 0x11,
       },
       p1Values: {
         ONLY_RETRIEVE: 0x00,
@@ -62,7 +63,7 @@ export default class IronfishApp extends GenericApp {
       .then(response => processGetKeysResponse(response, keyType), processErrorResponse)
   }
 
-  async signSendChunk(chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
+  async signChunk(ins: number, chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
     let payloadType = PAYLOAD_TYPE.ADD
     if (chunkIdx === 1) {
       payloadType = PAYLOAD_TYPE.INIT
@@ -72,7 +73,7 @@ export default class IronfishApp extends GenericApp {
     }
 
     return await this.transport
-      .send(this.CLA, this.INS.SIGN, payloadType, P2_VALUES.DEFAULT, chunk, [
+      .send(this.CLA, ins, payloadType, P2_VALUES.DEFAULT, chunk, [
         LedgerError.NoErrors,
         LedgerError.DataIsInvalid,
         LedgerError.BadKeyHandle,
@@ -108,6 +109,14 @@ export default class IronfishApp extends GenericApp {
       }, processErrorResponse)
   }
 
+  signSendChunk(chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
+    return this.signChunk(this.INS.SIGN, chunkIdx, chunkNum, chunk);
+  }
+
+  signDkgRound1Chunk(chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
+    return this.signChunk(this.INS.DKG_ROUND_1, chunkIdx, chunkNum, chunk);
+  }
+
   async sign(path: string, blob: Buffer): Promise<ResponseSign> {
     const chunks = this.prepareChunks(path, blob)
     return await this.signSendChunk(1, chunks.length, chunks[0]).then(async response => {
@@ -129,7 +138,36 @@ export default class IronfishApp extends GenericApp {
 
   async dkgGetIdentity(): Promise<ResponseIdentity> {
     return await this.transport
-      .send(this.CLA, this.INS.GET_IDENTITY, 0, 0, undefined, [LedgerError.NoErrors])
-      .then(response => processGetIdentityResponse(response), processErrorResponse)
+        .send(this.CLA, this.INS.GET_IDENTITY, 0, 0, undefined, [LedgerError.NoErrors])
+        .then(response => processGetIdentityResponse(response), processErrorResponse)
+  }
+
+  async dkgRound1(path: string, identities: string[], minSigners: number): Promise<ResponseIdentity> {
+    let blob = Buffer
+        .alloc(1 + identities.length * 129 + 1);
+
+    blob.writeUint8(identities.length);
+    for (let i = 0; i < identities.length; i++) {
+      blob.fill(Buffer.from(identities[i], "hex"), 1 + (i * 129))
+    }
+    blob.writeUint8(minSigners, 1 + identities.length * 129);
+
+    const chunks = this.prepareChunks(path, blob)
+
+    return await this.signDkgRound1Chunk(1, chunks.length, chunks[0]).then(async response => {
+      let result: ResponseSign = {
+        returnCode: response.returnCode,
+        errorMessage: response.errorMessage,
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        result = await this.signDkgRound1Chunk(1 + i, chunks.length, chunks[i])
+        if (result.returnCode !== LedgerError.NoErrors) {
+          break
+        }
+      }
+      return result
+    }, processErrorResponse)
   }
 }
