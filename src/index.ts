@@ -41,7 +41,7 @@ export default class IronfishApp extends GenericApp {
         GET_KEYS: 0x01,
         SIGN: 0x02,
         //DKG Instructions
-        GET_IDENTITY: 0x10,
+        DKG_IDENTITY: 0x10,
         DKG_ROUND_1: 0x11,
       },
       p1Values: {
@@ -113,10 +113,6 @@ export default class IronfishApp extends GenericApp {
     return this.signChunk(this.INS.SIGN, chunkIdx, chunkNum, chunk);
   }
 
-  signDkgRound1Chunk(chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
-    return this.signChunk(this.INS.DKG_ROUND_1, chunkIdx, chunkNum, chunk);
-  }
-
   async sign(path: string, blob: Buffer): Promise<ResponseSign> {
     const chunks = this.prepareChunks(path, blob)
     return await this.signSendChunk(1, chunks.length, chunks[0]).then(async response => {
@@ -138,8 +134,26 @@ export default class IronfishApp extends GenericApp {
 
   async dkgGetIdentity(): Promise<ResponseIdentity> {
     return await this.transport
-        .send(this.CLA, this.INS.GET_IDENTITY, 0, 0, undefined, [LedgerError.NoErrors])
+        .send(this.CLA, this.INS.DKG_IDENTITY, 0, 0, undefined, [LedgerError.NoErrors])
         .then(response => processGetIdentityResponse(response), processErrorResponse)
+  }
+
+  async sendDkgRound1Chunk(chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<Buffer> {
+    let payloadType = PAYLOAD_TYPE.ADD
+    if (chunkIdx === 1) {
+      payloadType = PAYLOAD_TYPE.INIT
+    }
+    if (chunkIdx === chunkNum) {
+      payloadType = PAYLOAD_TYPE.LAST
+    }
+
+    return await this.transport
+        .send(this.CLA, this.INS.DKG_ROUND_1, payloadType, P2_VALUES.DEFAULT, chunk, [
+          LedgerError.NoErrors,
+          LedgerError.DataIsInvalid,
+          LedgerError.BadKeyHandle,
+          LedgerError.SignVerifyError,
+        ])
   }
 
   async dkgRound1(path: string, identities: string[], minSigners: number): Promise<ResponseIdentity> {
@@ -154,20 +168,71 @@ export default class IronfishApp extends GenericApp {
 
     const chunks = this.prepareChunks(path, blob)
 
-    return await this.signDkgRound1Chunk(1, chunks.length, chunks[0]).then(async response => {
-      let result: ResponseSign = {
-        returnCode: response.returnCode,
-        errorMessage: response.errorMessage,
+    try{
+      let response = Buffer.alloc(0)
+      let returnCode = 0;
+      let errorCodeData = Buffer.alloc(0);
+      let errorMessage = "";
+      try {
+        response = await this.sendDkgRound1Chunk(1, chunks.length, chunks[0])
+        console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      }catch(e){
+        console.log(e)
       }
 
       for (let i = 1; i < chunks.length; i += 1) {
         // eslint-disable-next-line no-await-in-loop
-        result = await this.signDkgRound1Chunk(1 + i, chunks.length, chunks[i])
-        if (result.returnCode !== LedgerError.NoErrors) {
-          break
+        response = await this.sendDkgRound1Chunk(1 + i, chunks.length, chunks[i])
+        console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors){
+          return {
+            returnCode,
+            errorMessage
+          }
         }
       }
-      return result
-    }, processErrorResponse)
+
+      let data = Buffer.alloc(0)
+      while(true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.sendDkgRound1Chunk(0, 0, Buffer.alloc(0))
+          console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors){
+            return {
+              returnCode,
+              errorMessage
+            }
+          }
+
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            identity: data
+          }
+        }
+      }
+
+    } catch(e){
+      return processErrorResponse(e)
+    }
   }
 }
