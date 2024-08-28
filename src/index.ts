@@ -133,9 +133,12 @@ export default class IronfishApp extends GenericApp {
     }, processErrorResponse)
   }
 
-  async dkgGetIdentity(): Promise<ResponseIdentity> {
+  async dkgGetIdentity(index: number): Promise<ResponseIdentity> {
+    let data = Buffer.alloc(1);
+    data.writeUint8(index);
+
     return await this.transport
-        .send(this.CLA, this.INS.DKG_IDENTITY, 0, 0, undefined, [LedgerError.NoErrors])
+        .send(this.CLA, this.INS.DKG_IDENTITY, 0, 0, data, [LedgerError.NoErrors])
         .then(response => processGetIdentityResponse(response), processErrorResponse)
   }
 
@@ -157,15 +160,16 @@ export default class IronfishApp extends GenericApp {
         ])
   }
 
-  async dkgRound1(path: string, identities: string[], minSigners: number): Promise<ResponseDkgRound1> {
+  async dkgRound1(path: string, index:number, identities: string[], minSigners: number): Promise<ResponseDkgRound1> {
     let blob = Buffer
-        .alloc(1 + identities.length * 129 + 1);
+        .alloc(1 + 1 + identities.length * 129 + 1);
 
-    blob.writeUint8(identities.length);
+    blob.writeUint8(index);
+    blob.writeUint8(identities.length, 1);
     for (let i = 0; i < identities.length; i++) {
-      blob.fill(Buffer.from(identities[i], "hex"), 1 + (i * 129))
+      blob.fill(Buffer.from(identities[i], "hex"), 1 + 1 + (i * 129))
     }
-    blob.writeUint8(minSigners, 1 + identities.length * 129);
+    blob.writeUint8(minSigners, 1 + 1 + identities.length * 129);
 
     const chunks = this.prepareChunks(path, blob)
 
@@ -250,14 +254,16 @@ export default class IronfishApp extends GenericApp {
   }
 
 
-  async dkgRound2(path: string, round1PublicPackages: string[], round1SecretPackage: string): Promise<ResponseIdentity> {
+  async dkgRound2(path: string, index: number, round1PublicPackages: string[], round1SecretPackage: string): Promise<ResponseIdentity> {
     let round1PublicPackagesLen = round1PublicPackages[0].length / 2
     let round1SecretPackageLen = round1SecretPackage.length / 2
 
     let blob = Buffer
-        .alloc(1 + 2 + round1PublicPackages.length * round1PublicPackagesLen + 2 + round1SecretPackageLen);
+        .alloc(1 + 1 + 2 + round1PublicPackages.length * round1PublicPackagesLen + 2 + round1SecretPackageLen);
     let pos = 0;
 
+    blob.writeUint8(index, pos);
+    pos += 1;
     blob.writeUint8(round1PublicPackages.length, pos);
     pos += 1;
     blob.writeUint16BE(round1PublicPackagesLen, pos);
