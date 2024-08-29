@@ -180,25 +180,25 @@ export default class IronfishApp extends GenericApp {
       let errorMessage = "";
       try {
         response = await this.sendDkgChunk(this.INS.DKG_ROUND_1, 1, chunks.length, chunks[0])
-        console.log("resp 0 " + response.toString("hex"))
+        // console.log("resp 0 " + response.toString("hex"))
 
         errorCodeData = response.subarray(-2)
         returnCode = errorCodeData[0] * 256 + errorCodeData[1]
         errorMessage = errorCodeToString(returnCode)
       }catch(e){
-        console.log(e)
+        // console.log(e)
       }
 
       for (let i = 1; i < chunks.length; i += 1) {
         // eslint-disable-next-line no-await-in-loop
         response = await this.sendDkgChunk(this.INS.DKG_ROUND_1, 1 + i, chunks.length, chunks[i])
-        console.log("resp " + i + " " + response.toString("hex"))
+        // console.log("resp " + i + " " + response.toString("hex"))
 
         errorCodeData = response.subarray(-2)
         returnCode = errorCodeData[0] * 256 + errorCodeData[1]
         errorMessage = errorCodeToString(returnCode)
 
-        console.log("returnCode " + returnCode)
+        // console.log("returnCode " + returnCode)
         if (returnCode !== LedgerError.NoErrors){
           return {
             returnCode,
@@ -214,7 +214,7 @@ export default class IronfishApp extends GenericApp {
 
         if (response.length == 255) {
           response = await this.sendDkgChunk(this.INS.DKG_ROUND_1, 0, 0, Buffer.alloc(0))
-          console.log("resp " + response.toString("hex"))
+          // console.log("resp " + response.toString("hex"))
 
           errorCodeData = response.subarray(-2)
           returnCode = errorCodeData[0] * 256 + errorCodeData[1]
@@ -228,7 +228,7 @@ export default class IronfishApp extends GenericApp {
           }
 
         } else {
-          console.log("raw round1 " + data.toString("hex"))
+          // console.log("raw round1 " + data.toString("hex"))
           let pos = 0
           const secretPackageLen = data.readUint16BE(pos)
           pos += 2
@@ -289,25 +289,25 @@ export default class IronfishApp extends GenericApp {
       let errorMessage = "";
       try {
         response = await this.sendDkgChunk(this.INS.DKG_ROUND_2, 1, chunks.length, chunks[0])
-        console.log("resp 0 " + response.toString("hex"))
+        // console.log("resp 0 " + response.toString("hex"))
 
         errorCodeData = response.subarray(-2)
         returnCode = errorCodeData[0] * 256 + errorCodeData[1]
         errorMessage = errorCodeToString(returnCode)
       }catch(e){
-        console.log(e)
+        // console.log(e)
       }
 
       for (let i = 1; i < chunks.length; i += 1) {
         // eslint-disable-next-line no-await-in-loop
         response = await this.sendDkgChunk(this.INS.DKG_ROUND_2, 1 + i, chunks.length, chunks[i])
-        console.log("resp " + i + " " + response.toString("hex"))
+        // console.log("resp " + i + " " + response.toString("hex"))
 
         errorCodeData = response.subarray(-2)
         returnCode = errorCodeData[0] * 256 + errorCodeData[1]
         errorMessage = errorCodeToString(returnCode)
 
-        console.log("returnCode " + returnCode)
+        // console.log("returnCode " + returnCode)
         if (returnCode !== LedgerError.NoErrors){
           return {
             returnCode,
@@ -323,7 +323,7 @@ export default class IronfishApp extends GenericApp {
 
         if (response.length == 255) {
           response = await this.sendDkgChunk(this.INS.DKG_ROUND_2, 0, 0, Buffer.alloc(0))
-          console.log("resp " + response.toString("hex"))
+          // console.log("resp " + response.toString("hex"))
 
           errorCodeData = response.subarray(-2)
           returnCode = errorCodeData[0] * 256 + errorCodeData[1]
