@@ -30,7 +30,7 @@ import {
   IronfishKeys,
   KeyResponse,
   ResponseDkgRound1,
-  ResponseDkgRound2,
+  ResponseDkgRound2, ResponseDkgRound3,
   ResponseIdentity,
   ResponseSign
 } from './types'
@@ -52,6 +52,7 @@ export default class IronfishApp extends GenericApp {
         DKG_IDENTITY: 0x10,
         DKG_ROUND_1: 0x11,
         DKG_ROUND_2: 0x12,
+        DKG_ROUND_3: 0x13,
       },
       p1Values: {
         ONLY_RETRIEVE: 0x00,
@@ -360,6 +361,114 @@ export default class IronfishApp extends GenericApp {
             errorMessage,
             secretPackage,
             publicPackage
+          }
+        }
+      }
+
+    } catch(e){
+      return processErrorResponse(e)
+    }
+  }
+
+
+  async dkgRound3(path: string, index: number, round1PublicPackages: string[], round2PublicPackages: string[], round2SecretPackage: string): Promise<ResponseDkgRound3> {
+    let round1PublicPackagesLen = round1PublicPackages[0].length / 2
+    let round2PublicPackagesLen = round2PublicPackages[0].length / 2
+    let round2SecretPackageLen = round2SecretPackage.length / 2
+
+    let blob = Buffer
+        .alloc(1 + 1 + 2 + round1PublicPackages.length * round1PublicPackagesLen + 1 + 2 + round2PublicPackages.length * round2PublicPackagesLen + 2 + round2SecretPackageLen);
+    let pos = 0;
+
+    blob.writeUint8(index, pos);
+    pos += 1;
+
+    blob.writeUint8(round1PublicPackages.length, pos);
+    pos += 1;
+    blob.writeUint16BE(round1PublicPackagesLen, pos);
+    pos += 2;
+
+    for (let i = 0; i < round1PublicPackages.length; i++) {
+      blob.fill(Buffer.from(round1PublicPackages[i], "hex"), pos)
+      pos += round1PublicPackagesLen;
+    }
+
+    blob.writeUint8(round2PublicPackages.length, pos);
+    pos += 1;
+    blob.writeUint16BE(round2PublicPackagesLen, pos);
+    pos += 2;
+
+    for (let i = 0; i < round2PublicPackages.length; i++) {
+      blob.fill(Buffer.from(round2PublicPackages[i], "hex"), pos)
+      pos += round2PublicPackagesLen;
+    }
+
+    blob.writeUint16BE(round2SecretPackageLen, pos);
+    pos += 2;
+
+    blob.fill(Buffer.from(round2SecretPackage, "hex"), pos)
+    pos += round2SecretPackageLen;
+
+    const chunks = this.prepareChunks(path, blob)
+
+    try{
+      let response = Buffer.alloc(0)
+      let returnCode = 0;
+      let errorCodeData = Buffer.alloc(0);
+      let errorMessage = "";
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      }catch(e){
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors){
+          return {
+            returnCode,
+            errorMessage
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while(true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors){
+            return {
+              returnCode,
+              errorMessage
+            }
+          }
+
+        } else {
+          return {
+            returnCode,
+            errorMessage
           }
         }
       }

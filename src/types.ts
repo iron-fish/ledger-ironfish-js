@@ -7,6 +7,7 @@ export interface IronfishIns extends INSGeneric {
   DKG_IDENTITY: 0x10
   DKG_ROUND_1: 0x11
   DKG_ROUND_2: 0x12
+  DKG_ROUND_3: 0x13
 }
 
 export type KeyResponse = ResponseAddress | ResponseViewKey | ResponseProofGenKey
@@ -49,3 +50,4 @@ export interface ResponseDkgRound2 extends ResponseBase {
   publicPackage?: Buffer
   secretPackage?: Buffer
 }
+export interface ResponseDkgRound3 extends ResponseBase {}
