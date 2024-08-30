@@ -25,7 +25,15 @@ import GenericApp, {
 
 import { P2_VALUES, REDJUBJUB_SIGNATURE_LEN } from './consts'
 import { processGetIdentityResponse, processGetKeysResponse } from './helper'
-import {IronfishIns, IronfishKeys, KeyResponse, ResponseDkgRound1, ResponseIdentity, ResponseSign} from './types'
+import {
+  IronfishIns,
+  IronfishKeys,
+  KeyResponse,
+  ResponseDkgRound1,
+  ResponseDkgRound2,
+  ResponseIdentity,
+  ResponseSign
+} from './types'
 
 export * from './types'
 
@@ -254,7 +262,7 @@ export default class IronfishApp extends GenericApp {
   }
 
 
-  async dkgRound2(path: string, index: number, round1PublicPackages: string[], round1SecretPackage: string): Promise<ResponseIdentity> {
+  async dkgRound2(path: string, index: number, round1PublicPackages: string[], round1SecretPackage: string): Promise<ResponseDkgRound2> {
     let round1PublicPackagesLen = round1PublicPackages[0].length / 2
     let round1SecretPackageLen = round1SecretPackage.length / 2
 
@@ -337,10 +345,21 @@ export default class IronfishApp extends GenericApp {
           }
 
         } else {
+          let pos = 0
+          const secretPackageLen = data.readUint16BE(pos)
+          pos += 2
+          const secretPackage = data.subarray(pos, pos + secretPackageLen)
+          pos += secretPackageLen
+          const publicPackageLen = data.readUint16BE(pos)
+          pos += 2
+          const publicPackage = data.subarray(pos, pos + publicPackageLen)
+          pos += publicPackageLen
+
           return {
             returnCode,
             errorMessage,
-            identity: data
+            secretPackage,
+            publicPackage
           }
         }
       }

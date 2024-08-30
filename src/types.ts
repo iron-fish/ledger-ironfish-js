@@ -44,3 +44,8 @@ export interface ResponseDkgRound1 extends ResponseBase {
   publicPackage?: Buffer
   secretPackage?: Buffer
 }
+
+export interface ResponseDkgRound2 extends ResponseBase {
+  publicPackage?: Buffer
+  secretPackage?: Buffer
+}
