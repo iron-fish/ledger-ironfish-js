@@ -34,6 +34,7 @@ import {
   ResponseIdentity,
   ResponseSign
 } from './types'
+import { deserializePublicPackage, deserializeRound2CombinedPublicPackage } from '@ironfish/rust-nodejs'
 
 export * from './types'
 
@@ -371,7 +372,7 @@ export default class IronfishApp extends GenericApp {
   }
 
 
-  async dkgRound3(path: string, index: number, round1PublicPackages: string[], round2PublicPackages: string[], round2SecretPackage: string): Promise<ResponseDkgRound3> {
+  async dkgRound3Old(path: string, index: number, round1PublicPackages: string[], round2PublicPackages: string[], round2SecretPackage: string): Promise<ResponseDkgRound3> {
     let round1PublicPackagesLen = round1PublicPackages[0].length / 2
     let round2PublicPackagesLen = round2PublicPackages[0].length / 2
     let round2SecretPackageLen = round2SecretPackage.length / 2
@@ -408,6 +409,178 @@ export default class IronfishApp extends GenericApp {
 
     blob.fill(Buffer.from(round2SecretPackage, "hex"), pos)
     pos += round2SecretPackageLen;
+
+    const chunks = this.prepareChunks(path, blob)
+
+    try{
+      let response = Buffer.alloc(0)
+      let returnCode = 0;
+      let errorCodeData = Buffer.alloc(0);
+      let errorMessage = "";
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      }catch(e){
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors){
+          return {
+            returnCode,
+            errorMessage
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while(true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors){
+            return {
+              returnCode,
+              errorMessage
+            }
+          }
+
+        } else {
+          return {
+            returnCode,
+            errorMessage
+          }
+        }
+      }
+
+    } catch(e){
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgRound3(path: string, index: number, round1PublicPackages: string[], round2PublicPackages: string[], round2SecretPackage: string): Promise<ResponseDkgRound3> {
+    let round1Pkgs = round1PublicPackages.map((p) => deserializePublicPackage(p))
+    let round2Pkgs = round2PublicPackages.map((p) => deserializeRound2CombinedPublicPackage(p))
+
+    let identity
+
+    let participants = []
+    let round1PublicPkgs= []
+    let round2PublicPkgs = []
+    let gskBytes = []
+    for (let i = 0; i < round1Pkgs.length; i++) {
+      gskBytes.push(round1Pkgs[i].groupSecretKeyShardEncrypted)
+
+      // TODO: is the index 0-indexed?
+      if (i == index) {
+        identity = round1Pkgs[i].identity
+      } else {
+        participants.push(round1Pkgs[i].identity)
+        round1PublicPkgs.push(round1Pkgs[i].frostPackage)
+      }
+    }
+
+    for (let i = 0; i < round2Pkgs.length; i++) {
+      for (let j = 0; j < round2Pkgs[i].packages.length; j++) {
+        if (round2Pkgs[i].packages[j].recipientIdentity == identity) {
+          round2PublicPkgs.push(round2Pkgs[i].packages[j].frostPackage)
+        }
+      }
+    }
+
+    let round1PublicPkgsLen = round1PublicPkgs[0].length / 2
+    let round2PublicPkgsLen = round2PublicPkgs[0].length / 2
+    let round2SecretPkgLen = round2SecretPackage.length / 2 // staying the same
+    let participantsLen = participants[0].length / 2
+    let gskLen = gskBytes[0].length / 2
+
+    let blob = Buffer.alloc(1 + 1 + 2 + round1PublicPkgs.length * round1PublicPkgsLen + 1 + 2 + round2PublicPkgs.length * round2PublicPkgsLen + 2 + round2SecretPkgLen + 1 + 2 + participants.length * participantsLen + 1 + 2 + gskBytes.length * gskLen)
+    let pos = 0
+
+    // identity index
+    blob.writeUint8(index, pos)
+    pos += 1
+
+    // number of round 1 packages
+    blob.writeUint8(round1PublicPkgs.length, pos)
+    pos += 1
+
+    // round 1 package length
+    blob.writeUint16BE(round1PublicPkgsLen, pos)
+    pos += 2
+
+    // round 1 packages
+    for (let i = 0; i < round1PublicPkgs.length; i++) {
+      blob.fill(Buffer.from(round1PublicPkgs[i], "hex"), pos)
+      pos += round1PublicPkgsLen
+    }
+
+    // number of round 2 packages
+    blob.writeUint8(round2PublicPkgs.length, pos);
+    pos += 1;
+    // round 2 package length
+    blob.writeUint16BE(round2PublicPkgsLen, pos);
+    pos += 2;
+
+    // round 2 packages
+    for (let i = 0; i < round2PublicPkgs.length; i++) {
+      blob.fill(Buffer.from(round2PublicPkgs[i], "hex"), pos)
+      pos += round2PublicPkgsLen;
+    }
+
+    // round 2 secret
+    blob.writeUint16BE(round2SecretPkgLen, pos);
+    pos += 2;
+
+    blob.fill(Buffer.from(round2SecretPackage, "hex"), pos)
+    pos += round2SecretPkgLen;
+
+    // participants
+    // number of participants
+    blob.writeUint8(participants.length, pos);
+    pos += 1;
+
+    // participant payload length
+    blob.writeUint16BE(participantsLen, pos)
+    pos += 2;
+
+    for (let i = 0; i < participants.length; i++) {
+      blob.fill(Buffer.from(participants[i], "hex"), pos)
+      pos += participantsLen;
+    }
+
+    // gsk_bytes
+    blob.writeUint8(gskBytes.length, pos);
+    pos += 1;
+
+    blob.writeUint16BE(gskLen, pos)
+    pos += 2;
+
+    for (let i = 0; i < gskBytes.length; i++) {
+      blob.fill(Buffer.from(gskBytes[i], "hex"), pos)
+      pos += gskLen;
+    }
 
     const chunks = this.prepareChunks(path, blob)
 
