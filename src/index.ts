@@ -18,18 +18,45 @@ import GenericApp, {
   ConstructorParams,
   LedgerError,
   PAYLOAD_TYPE,
+  ResponseBase,
   Transport,
   errorCodeToString,
   processErrorResponse,
 } from '@zondax/ledger-js'
 
 import { P2_VALUES, REDJUBJUB_SIGNATURE_LEN } from './consts'
+import { deserializeDkgRound1, deserializeDkgRound2 } from './deserialize'
 import { processGetIdentityResponse, processGetKeysResponse } from './helper'
-import { IronfishIns, IronfishKeys, KeyResponse, ResponseIdentity, ResponseSign } from './types'
+import {
+  serializeDkgGetCommitments,
+  serializeDkgGetNonces,
+  serializeDkgRound1,
+  serializeDkgRound2,
+  serializeDkgRound3,
+  serializeDkgSign,
+} from './serialize'
+import {
+  IronfishIns,
+  IronfishKeys,
+  KeyResponse,
+  ResponseDkgBackupKeys,
+  ResponseDkgGetCommitments,
+  ResponseDkgGetNonces,
+  ResponseDkgGetPublicPackage,
+  ResponseDkgRound1,
+  ResponseDkgRound2,
+  ResponseDkgRound3,
+  ResponseDkgSign,
+  ResponseIdentity,
+  ResponseSign,
+} from './types'
 
 export * from './types'
 
+const DUMMY_PATH = "m/44'/1338'/0"
+
 export default class IronfishApp extends GenericApp {
+  readonly CLA_DKG: number = 0x63
   readonly INS!: IronfishIns
   constructor(transport: Transport) {
     if (transport == null) throw new Error('Transport has not been defined')
@@ -41,7 +68,17 @@ export default class IronfishApp extends GenericApp {
         GET_KEYS: 0x01,
         SIGN: 0x02,
         //DKG Instructions
-        GET_IDENTITY: 0x10,
+        DKG_IDENTITY: 0x10,
+        DKG_ROUND_1: 0x11,
+        DKG_ROUND_2: 0x12,
+        DKG_ROUND_3: 0x13,
+        DKG_GET_COMMITMENTS: 0x14,
+        DKG_SIGN: 0x15,
+        DKG_GET_KEYS: 0x16,
+        DKG_GET_NONCES: 0x17,
+        DKG_GET_PUBLIC_PACKAGE: 0x18,
+        DKG_BACKUP_KEYS: 0x19,
+        DKG_RESTORE_KEYS: 0x1a,
       },
       p1Values: {
         ONLY_RETRIEVE: 0x00,
@@ -62,7 +99,7 @@ export default class IronfishApp extends GenericApp {
       .then(response => processGetKeysResponse(response, keyType), processErrorResponse)
   }
 
-  async signSendChunk(chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
+  async signChunk(ins: number, chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
     let payloadType = PAYLOAD_TYPE.ADD
     if (chunkIdx === 1) {
       payloadType = PAYLOAD_TYPE.INIT
@@ -72,7 +109,7 @@ export default class IronfishApp extends GenericApp {
     }
 
     return await this.transport
-      .send(this.CLA, this.INS.SIGN, payloadType, P2_VALUES.DEFAULT, chunk, [
+      .send(this.CLA, ins, payloadType, P2_VALUES.DEFAULT, chunk, [
         LedgerError.NoErrors,
         LedgerError.DataIsInvalid,
         LedgerError.BadKeyHandle,
@@ -91,7 +128,7 @@ export default class IronfishApp extends GenericApp {
           errorMessage = `${errorMessage} : ${response.subarray(0, response.length - 2).toString('ascii')}`
         }
 
-        if (returnCode === LedgerError.NoErrors && response.length == (2 + REDJUBJUB_SIGNATURE_LEN)) {
+        if (returnCode === LedgerError.NoErrors && response.length == 2 + REDJUBJUB_SIGNATURE_LEN) {
           const signature = response.subarray(0, REDJUBJUB_SIGNATURE_LEN)
 
           return {
@@ -106,6 +143,10 @@ export default class IronfishApp extends GenericApp {
           errorMessage,
         }
       }, processErrorResponse)
+  }
+
+  signSendChunk(chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<ResponseSign> {
+    return this.signChunk(this.INS.SIGN, chunkIdx, chunkNum, chunk)
   }
 
   async sign(path: string, blob: Buffer): Promise<ResponseSign> {
@@ -127,9 +168,600 @@ export default class IronfishApp extends GenericApp {
     }, processErrorResponse)
   }
 
-  async dkgGetIdentity(): Promise<ResponseIdentity> {
+  async dkgGetIdentity(index: number): Promise<ResponseIdentity> {
+    let data = Buffer.alloc(1)
+    data.writeUint8(index)
+
     return await this.transport
-      .send(this.CLA, this.INS.GET_IDENTITY, 0, 0, undefined, [LedgerError.NoErrors])
+      .send(this.CLA_DKG, this.INS.DKG_IDENTITY, 0, 0, data, [LedgerError.NoErrors])
       .then(response => processGetIdentityResponse(response), processErrorResponse)
+  }
+
+  async sendDkgChunk(ins: number, chunkIdx: number, chunkNum: number, chunk: Buffer): Promise<Buffer> {
+    let payloadType = PAYLOAD_TYPE.ADD
+    if (chunkIdx === 1) {
+      payloadType = PAYLOAD_TYPE.INIT
+    }
+    if (chunkIdx === chunkNum) {
+      payloadType = PAYLOAD_TYPE.LAST
+    }
+
+    return await this.transport.send(this.CLA_DKG, ins, payloadType, P2_VALUES.DEFAULT, chunk, [
+      LedgerError.NoErrors,
+      LedgerError.DataIsInvalid,
+      LedgerError.BadKeyHandle,
+      LedgerError.SignVerifyError,
+    ])
+  }
+
+  async dkgRound1(index: number, identities: string[], minSigners: number): Promise<ResponseDkgRound1> {
+    const blob = serializeDkgRound1(index, identities, minSigners)
+    const chunks = this.prepareChunks(DUMMY_PATH, blob)
+
+    try {
+      let response = Buffer.alloc(0)
+      let returnCode = 0
+      let errorCodeData = Buffer.alloc(0)
+      let errorMessage = ''
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_1, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      } catch (e) {
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_1, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors) {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.transport.send(this.CLA_DKG, this.INS.DKG_ROUND_1, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            ...deserializeDkgRound1(data),
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgRound2(index: number, round1PublicPackages: string[], round1SecretPackage: string): Promise<ResponseDkgRound2> {
+    const blob = serializeDkgRound2(index, round1PublicPackages, round1SecretPackage)
+    const chunks = this.prepareChunks(DUMMY_PATH, blob)
+
+    try {
+      let response = Buffer.alloc(0)
+      let returnCode = 0
+      let errorCodeData = Buffer.alloc(0)
+      let errorMessage = ''
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_2, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      } catch (e) {
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_2, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors) {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.transport.send(this.CLA_DKG, this.INS.DKG_ROUND_2, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            ...deserializeDkgRound2(data),
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgRound3(
+    index: number,
+    round1PublicPackages: string[],
+    round2PublicPackages: string[],
+    round2SecretPackage: string
+  ): Promise<ResponseDkgRound3> {
+    const blob = serializeDkgRound3(index, round1PublicPackages, round2PublicPackages, round2SecretPackage)
+    const chunks = this.prepareChunks(DUMMY_PATH, blob)
+
+    try {
+      let response = Buffer.alloc(0)
+      let returnCode = 0
+      let errorCodeData = Buffer.alloc(0)
+      let errorMessage = ''
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      } catch (e) {
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors) {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.transport.send(this.CLA_DKG, this.INS.DKG_ROUND_3, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgGetCommitments(identities: string[], tx_hash: string): Promise<ResponseDkgGetCommitments> {
+    const blob = serializeDkgGetCommitments(identities, tx_hash)
+    const chunks = this.prepareChunks(DUMMY_PATH, blob)
+
+    try {
+      let response = Buffer.alloc(0)
+      let returnCode = 0
+      let errorCodeData = Buffer.alloc(0)
+      let errorMessage = ''
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_GET_COMMITMENTS, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      } catch (e) {
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_GET_COMMITMENTS, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors) {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.transport.send(this.CLA_DKG, this.INS.DKG_GET_COMMITMENTS, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            commitments: data,
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgGetNonces(identities: string[], tx_hash: string): Promise<ResponseDkgGetNonces> {
+    const blob = serializeDkgGetNonces(identities, tx_hash)
+    const chunks = this.prepareChunks(DUMMY_PATH, blob)
+
+    try {
+      let response = Buffer.alloc(0)
+      let returnCode = 0
+      let errorCodeData = Buffer.alloc(0)
+      let errorMessage = ''
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_GET_NONCES, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      } catch (e) {
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_GET_NONCES, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors) {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.transport.send(this.CLA_DKG, this.INS.DKG_GET_NONCES, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            nonces: data,
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgSign(pkRandomness: string, frostSigningPackage: string, nonces: string): Promise<ResponseDkgSign> {
+    const blob = serializeDkgSign(pkRandomness, frostSigningPackage, nonces)
+    const chunks = this.prepareChunks(DUMMY_PATH, blob)
+
+    try {
+      let response = Buffer.alloc(0)
+      let returnCode = 0
+      let errorCodeData = Buffer.alloc(0)
+      let errorMessage = ''
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_SIGN, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      } catch (e) {
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_SIGN, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors) {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.transport.send(this.CLA_DKG, this.INS.DKG_SIGN, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            signature: data,
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgGetPublicPackage(): Promise<ResponseDkgGetPublicPackage> {
+    try {
+      let response = await this.transport.send(this.CLA_DKG, this.INS.DKG_GET_PUBLIC_PACKAGE, 0, 0, Buffer.alloc(0), [LedgerError.NoErrors])
+      // console.log("resp 0 " + response.toString("hex"))
+      let errorCodeData = response.subarray(-2)
+      let returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+      let errorMessage = errorCodeToString(returnCode)
+
+      // console.log("returnCode " + returnCode)
+      if (returnCode !== LedgerError.NoErrors) {
+        return {
+          returnCode,
+          errorMessage,
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.sendDkgChunk(this.INS.DKG_GET_PUBLIC_PACKAGE, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            publicPackage: data,
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+
+  async dkgBackupKeys(): Promise<ResponseDkgBackupKeys> {
+    try {
+      let response = await this.transport.send(this.CLA_DKG, this.INS.DKG_BACKUP_KEYS, 0, 0, Buffer.alloc(0), [LedgerError.NoErrors])
+      // console.log("resp 0 " + response.toString("hex"))
+      let errorCodeData = response.subarray(-2)
+      let returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+      let errorMessage = errorCodeToString(returnCode)
+
+      // console.log("returnCode " + returnCode)
+      if (returnCode !== LedgerError.NoErrors) {
+        return {
+          returnCode,
+          errorMessage,
+        }
+      }
+
+      let data = Buffer.alloc(0)
+      while (true) {
+        let newData = response.subarray(0, response.length - 2)
+        data = Buffer.concat([data, newData])
+
+        if (response.length == 255) {
+          response = await this.transport.send(this.CLA_DKG, this.INS.DKG_BACKUP_KEYS, 0, 0, Buffer.alloc(0))
+          // console.log("resp " + response.toString("hex"))
+
+          errorCodeData = response.subarray(-2)
+          returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+          errorMessage = errorCodeToString(returnCode)
+
+          if (returnCode !== LedgerError.NoErrors) {
+            return {
+              returnCode,
+              errorMessage,
+            }
+          }
+        } else {
+          return {
+            returnCode,
+            errorMessage,
+            encryptedKeys: data,
+          }
+        }
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
+  }
+  async dkgRetrieveKeys(keyType: IronfishKeys): Promise<KeyResponse> {
+    return await this.transport
+      .send(this.CLA_DKG, this.INS.DKG_GET_KEYS, 0, keyType, Buffer.alloc(0), [LedgerError.NoErrors])
+      .then(response => processGetKeysResponse(response, keyType), processErrorResponse)
+  }
+
+  async dkgRestoreKeys(encryptedKeys: string): Promise<ResponseBase> {
+    const chunks = this.prepareChunks(DUMMY_PATH, Buffer.from(encryptedKeys, 'hex'))
+
+    try {
+      let response = Buffer.alloc(0)
+      let returnCode = 0
+      let errorCodeData = Buffer.alloc(0)
+      let errorMessage = ''
+      try {
+        response = await this.sendDkgChunk(this.INS.DKG_RESTORE_KEYS, 1, chunks.length, chunks[0])
+        // console.log("resp 0 " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+      } catch (e) {
+        // console.log(e)
+      }
+
+      for (let i = 1; i < chunks.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.sendDkgChunk(this.INS.DKG_RESTORE_KEYS, 1 + i, chunks.length, chunks[i])
+        // console.log("resp " + i + " " + response.toString("hex"))
+
+        errorCodeData = response.subarray(-2)
+        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
+        errorMessage = errorCodeToString(returnCode)
+
+        // console.log("returnCode " + returnCode)
+        if (returnCode !== LedgerError.NoErrors) {
+          return {
+            returnCode,
+            errorMessage,
+          }
+        }
+      }
+
+      return {
+        returnCode,
+        errorMessage,
+      }
+    } catch (e) {
+      return processErrorResponse(e)
+    }
   }
 }
