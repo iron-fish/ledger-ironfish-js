@@ -75,26 +75,12 @@ export const serializeDkgGetCommitments = (identities: string[], tx_hash: string
   return blob
 }
 
-export const serializeDkgGetNonces = (identities: string[], tx_hash: string): Buffer => {
-  let blob = Buffer.alloc(1 + identities.length * 129 + 32)
-  console.log(`dkgGetNonces msg size: ${blob.byteLength}`)
-
-  blob.writeUint8(identities.length, 0)
-
-  for (let i = 0; i < identities.length; i++) {
-    blob.fill(Buffer.from(identities[i], 'hex'), 1 + i * 129)
-  }
-
-  blob.fill(Buffer.from(tx_hash, 'hex'), 1 + identities.length * 129)
-  return blob
-}
-
-export const serializeDkgSign = (pkRandomness: string, frostSigningPackage: string, nonces: string): Buffer => {
+export const serializeDkgSign = (pkRandomness: string, frostSigningPackage: string, txHash: string): Buffer => {
   let pkRandomnessLen = pkRandomness.length / 2
   let frostSigningPackageLen = frostSigningPackage.length / 2
-  let noncesLen = nonces.length / 2
+  let txHashLen = 32
 
-  let blob = Buffer.alloc(2 + pkRandomnessLen + 2 + frostSigningPackageLen + 2 + noncesLen)
+  let blob = Buffer.alloc(2 + pkRandomnessLen + 2 + frostSigningPackageLen + txHashLen)
   console.log(`dkgSign msg size: ${blob.byteLength}`)
 
   let pos = 0
@@ -109,9 +95,7 @@ export const serializeDkgSign = (pkRandomness: string, frostSigningPackage: stri
   blob.fill(Buffer.from(frostSigningPackage, 'hex'), pos)
   pos += frostSigningPackageLen
 
-  blob.writeUint16BE(noncesLen, pos)
-  pos += 2
-  blob.fill(Buffer.from(nonces, 'hex'), pos)
+  blob.fill(Buffer.from(txHash, 'hex'), pos)
 
   return blob
 }

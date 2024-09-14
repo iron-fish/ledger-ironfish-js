@@ -27,14 +27,7 @@ import GenericApp, {
 import { P2_VALUES, REDJUBJUB_SIGNATURE_LEN } from './consts'
 import { deserializeDkgRound1, deserializeDkgRound2 } from './deserialize'
 import { processGetIdentityResponse, processGetKeysResponse } from './helper'
-import {
-  serializeDkgGetCommitments,
-  serializeDkgGetNonces,
-  serializeDkgRound1,
-  serializeDkgRound2,
-  serializeDkgRound3,
-  serializeDkgSign,
-} from './serialize'
+import { serializeDkgGetCommitments, serializeDkgRound1, serializeDkgRound2, serializeDkgRound3, serializeDkgSign } from './serialize'
 import {
   IronfishIns,
   IronfishKeys,
@@ -406,61 +399,8 @@ export default class IronfishApp extends GenericApp {
     }
   }
 
-  async dkgGetNonces(identities: string[], tx_hash: string): Promise<ResponseDkgGetNonces> {
-    const blob = serializeDkgGetNonces(identities, tx_hash)
-    const chunks = this.prepareChunks(DUMMY_PATH, blob)
-
-    try {
-      let response = Buffer.alloc(0)
-      let returnCode = 0
-      let errorCodeData = Buffer.alloc(0)
-      let errorMessage = ''
-      try {
-        response = await this.sendDkgChunk(this.INS.DKG_GET_NONCES, 1, chunks.length, chunks[0])
-        // console.log("resp 0 " + response.toString("hex"))
-
-        errorCodeData = response.subarray(-2)
-        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
-        errorMessage = errorCodeToString(returnCode)
-      } catch (e) {
-        // console.log(e)
-      }
-
-      for (let i = 1; i < chunks.length; i += 1) {
-        // eslint-disable-next-line no-await-in-loop
-        response = await this.sendDkgChunk(this.INS.DKG_GET_NONCES, 1 + i, chunks.length, chunks[i])
-        // console.log("resp " + i + " " + response.toString("hex"))
-
-        errorCodeData = response.subarray(-2)
-        returnCode = errorCodeData[0] * 256 + errorCodeData[1]
-        errorMessage = errorCodeToString(returnCode)
-
-        // console.log("returnCode " + returnCode)
-        if (returnCode !== LedgerError.NoErrors) {
-          return {
-            returnCode,
-            errorMessage,
-          }
-        }
-      }
-
-      let { isError, responseResult, rawResponse } = this.checkResponseCode(response)
-      if (isError) return responseResult
-
-      let result = await this.getResult(rawResponse)
-
-      return {
-        returnCode: result.returnCode,
-        errorMessage: result.errorMessage,
-        nonces: result.data,
-      }
-    } catch (e) {
-      return processErrorResponse(e)
-    }
-  }
-
-  async dkgSign(pkRandomness: string, frostSigningPackage: string, nonces: string): Promise<ResponseDkgSign> {
-    const blob = serializeDkgSign(pkRandomness, frostSigningPackage, nonces)
+  async dkgSign(pkRandomness: string, frostSigningPackage: string, txHash: string): Promise<ResponseDkgSign> {
+    const blob = serializeDkgSign(pkRandomness, frostSigningPackage, txHash)
     const chunks = this.prepareChunks(DUMMY_PATH, blob)
 
     try {
