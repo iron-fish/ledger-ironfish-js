@@ -60,17 +60,11 @@ export const serializeDkgRound3 = (
   return blob
 }
 
-export const serializeDkgGetCommitments = (identities: string[], tx_hash: string): Buffer => {
-  let blob = Buffer.alloc(1 + identities.length * 129 + 32)
+export const serializeDkgGetCommitments = (tx_hash: string): Buffer => {
+  let blob = Buffer.alloc(32)
   console.log(`dkgGetCommitment msg size: ${blob.byteLength}`)
 
-  blob.writeUint8(identities.length, 0)
-
-  for (let i = 0; i < identities.length; i++) {
-    blob.fill(Buffer.from(identities[i], 'hex'), 1 + i * 129)
-  }
-
-  blob.fill(Buffer.from(tx_hash, 'hex'), 1 + identities.length * 129)
+  blob.fill(Buffer.from(tx_hash, 'hex'), 0)
 
   return blob
 }

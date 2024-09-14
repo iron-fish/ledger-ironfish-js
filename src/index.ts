@@ -34,7 +34,6 @@ import {
   KeyResponse,
   ResponseDkgBackupKeys,
   ResponseDkgGetCommitments,
-  ResponseDkgGetNonces,
   ResponseDkgGetPublicPackage,
   ResponseDkgRound1,
   ResponseDkgRound2,
@@ -346,8 +345,8 @@ export default class IronfishApp extends GenericApp {
     }
   }
 
-  async dkgGetCommitments(identities: string[], tx_hash: string): Promise<ResponseDkgGetCommitments> {
-    const blob = serializeDkgGetCommitments(identities, tx_hash)
+  async dkgGetCommitments(tx_hash: string): Promise<ResponseDkgGetCommitments> {
+    const blob = serializeDkgGetCommitments(tx_hash)
     const chunks = this.prepareChunks(DUMMY_PATH, blob)
 
     try {
