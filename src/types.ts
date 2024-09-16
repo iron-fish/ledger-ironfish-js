@@ -58,7 +58,7 @@ export interface ResponseDkgRound2 extends ResponseBase {
   publicPackage?: Buffer
   secretPackage?: Buffer
 }
-export interface ResponseDkgRound3 extends ResponseBase {}
+export interface ResponseDkgRound3Min extends ResponseBase {}
 export interface ResponseDkgGetCommitments extends ResponseBase {
   commitments?: Buffer
 }

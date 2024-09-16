@@ -28,7 +28,6 @@
     "url": "https://github.com/zondax/ledger-ironfish-js/issues"
   },
   "dependencies": {
-    "@ironfish/rust-nodejs": "../ironfish/ironfish-rust-nodejs",
     "@zondax/ledger-js": "^0.2.1"
   },
   "devDependencies": {

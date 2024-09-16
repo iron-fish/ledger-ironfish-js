@@ -27,7 +27,7 @@ import GenericApp, {
 import { P2_VALUES, REDJUBJUB_SIGNATURE_LEN } from './consts'
 import { deserializeDkgRound1, deserializeDkgRound2 } from './deserialize'
 import { processGetIdentityResponse, processGetKeysResponse } from './helper'
-import { serializeDkgGetCommitments, serializeDkgRound1, serializeDkgRound2, serializeDkgRound3, serializeDkgSign } from './serialize'
+import { serializeDkgGetCommitments, serializeDkgRound1, serializeDkgRound2, serializeDkgRound3Min, serializeDkgSign } from './serialize'
 import {
   IronfishIns,
   IronfishKeys,
@@ -37,7 +37,7 @@ import {
   ResponseDkgGetPublicPackage,
   ResponseDkgRound1,
   ResponseDkgRound2,
-  ResponseDkgRound3,
+  ResponseDkgRound3Min,
   ResponseDkgSign,
   ResponseIdentity,
   ResponseSign,
@@ -63,7 +63,7 @@ export default class IronfishApp extends GenericApp {
         DKG_IDENTITY: 0x10,
         DKG_ROUND_1: 0x11,
         DKG_ROUND_2: 0x12,
-        DKG_ROUND_3: 0x13,
+        DKG_ROUND_3_MIN: 0x13,
         DKG_GET_COMMITMENTS: 0x14,
         DKG_SIGN: 0x15,
         DKG_GET_KEYS: 0x16,
@@ -293,13 +293,15 @@ export default class IronfishApp extends GenericApp {
     }
   }
 
-  async dkgRound3(
+  async dkgRound3Min(
     index: number,
-    round1PublicPackages: string[],
-    round2PublicPackages: string[],
-    round2SecretPackage: string
-  ): Promise<ResponseDkgRound3> {
-    const blob = serializeDkgRound3(index, round1PublicPackages, round2PublicPackages, round2SecretPackage)
+    participants: string[],
+    round1PublicPkgs: string[],
+    round2PublicPkgs: string[],
+    round2SecretPackage: string,
+    gskBytes: string[]
+  ): Promise<ResponseDkgRound3Min> {
+    const blob = serializeDkgRound3Min(index, participants, round1PublicPkgs, round2PublicPkgs, round2SecretPackage, gskBytes)
     const chunks = this.prepareChunks(DUMMY_PATH, blob)
 
     try {
@@ -308,7 +310,7 @@ export default class IronfishApp extends GenericApp {
       let errorCodeData = Buffer.alloc(0)
       let errorMessage = ''
       try {
-        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1, chunks.length, chunks[0])
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3_MIN, 1, chunks.length, chunks[0])
         // console.log("resp 0 " + response.toString("hex"))
 
         errorCodeData = response.subarray(-2)
@@ -320,7 +322,7 @@ export default class IronfishApp extends GenericApp {
 
       for (let i = 1; i < chunks.length; i += 1) {
         // eslint-disable-next-line no-await-in-loop
-        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3, 1 + i, chunks.length, chunks[i])
+        response = await this.sendDkgChunk(this.INS.DKG_ROUND_3_MIN, 1 + i, chunks.length, chunks[i])
         // console.log("resp " + i + " " + response.toString("hex"))
 
         errorCodeData = response.subarray(-2)
