@@ -48,13 +48,12 @@ export * from './types'
 const DUMMY_PATH = "m/44'/1338'/0"
 
 export default class IronfishApp extends GenericApp {
-  readonly CLA_DKG: number = 0x63
   readonly INS!: IronfishIns
-  constructor(transport: Transport) {
+  constructor(transport: Transport, dkgMode?: boolean) {
     if (transport == null) throw new Error('Transport has not been defined')
 
     const params: ConstructorParams = {
-      cla: 0x59,
+      cla: dkgMode ? 0x63 : 0x59,
       ins: {
         GET_VERSION: 0x00,
         GET_KEYS: 0x01,
@@ -166,7 +165,7 @@ export default class IronfishApp extends GenericApp {
     data.writeUint8(index)
 
     return await this.transport
-      .send(this.CLA_DKG, this.INS.DKG_IDENTITY, 0, 0, data, [LedgerError.NoErrors])
+      .send(this.CLA, this.INS.DKG_IDENTITY, 0, 0, data, [LedgerError.NoErrors])
       .then(response => processGetIdentityResponse(response), processErrorResponse)
   }
 
@@ -179,7 +178,7 @@ export default class IronfishApp extends GenericApp {
       payloadType = PAYLOAD_TYPE.LAST
     }
 
-    return await this.transport.send(this.CLA_DKG, ins, payloadType, P2_VALUES.DEFAULT, chunk, [
+    return await this.transport.send(this.CLA, ins, payloadType, P2_VALUES.DEFAULT, chunk, [
       LedgerError.NoErrors,
       LedgerError.DataIsInvalid,
       LedgerError.BadKeyHandle,
@@ -455,7 +454,7 @@ export default class IronfishApp extends GenericApp {
 
   async dkgGetPublicPackage(): Promise<ResponseDkgGetPublicPackage> {
     try {
-      let response = await this.transport.send(this.CLA_DKG, this.INS.DKG_GET_PUBLIC_PACKAGE, 0, 0, Buffer.alloc(0), [LedgerError.NoErrors])
+      let response = await this.transport.send(this.CLA, this.INS.DKG_GET_PUBLIC_PACKAGE, 0, 0, Buffer.alloc(0), [LedgerError.NoErrors])
       let { isError, responseResult, rawResponse } = this.checkResponseCode(response)
       if (isError) return responseResult
 
@@ -473,7 +472,7 @@ export default class IronfishApp extends GenericApp {
 
   async dkgBackupKeys(): Promise<ResponseDkgBackupKeys> {
     try {
-      let response = await this.transport.send(this.CLA_DKG, this.INS.DKG_BACKUP_KEYS, 0, 0, Buffer.alloc(0), [LedgerError.NoErrors])
+      let response = await this.transport.send(this.CLA, this.INS.DKG_BACKUP_KEYS, 0, 0, Buffer.alloc(0), [LedgerError.NoErrors])
       let { isError, responseResult, rawResponse } = this.checkResponseCode(response)
       if (isError) return responseResult
 
@@ -490,7 +489,7 @@ export default class IronfishApp extends GenericApp {
   }
   async dkgRetrieveKeys(keyType: IronfishKeys): Promise<KeyResponse> {
     return await this.transport
-      .send(this.CLA_DKG, this.INS.DKG_GET_KEYS, 0, keyType, Buffer.alloc(0), [LedgerError.NoErrors])
+      .send(this.CLA, this.INS.DKG_GET_KEYS, 0, keyType, Buffer.alloc(0), [LedgerError.NoErrors])
       .then(response => processGetKeysResponse(response, keyType), processErrorResponse)
   }
 
@@ -545,7 +544,7 @@ export default class IronfishApp extends GenericApp {
 
     let chunks = rawResponse.readUint8(0)
     for (let i = 0; i < chunks; i++) {
-      let response = await this.transport.send(this.CLA_DKG, this.INS.GET_RESULT, i, 0, Buffer.alloc(0))
+      let response = await this.transport.send(this.CLA, this.INS.GET_RESULT, i, 0, Buffer.alloc(0))
       let { isError, responseResult, rawResponse } = this.checkResponseCode(response)
       if (isError) return responseResult
 
