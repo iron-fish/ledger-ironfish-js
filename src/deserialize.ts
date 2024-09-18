@@ -1,5 +1,5 @@
 export const deserializeDkgRound1 = (data?: Buffer) => {
-  if (!data) return {}
+  if (!data) throw new Error('unexpected empty data')
 
   let pos = 0
   const secretPackageLen = data.readUint16BE(pos)
@@ -18,7 +18,7 @@ export const deserializeDkgRound1 = (data?: Buffer) => {
 }
 
 export const deserializeDkgRound2 = (data?: Buffer) => {
-  if (!data) return {}
+  if (!data) throw new Error('unexpected empty data')
 
   let pos = 0
   const secretPackageLen = data.readUint16BE(pos)
